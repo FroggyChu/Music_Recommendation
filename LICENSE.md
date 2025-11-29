@@ -2,7 +2,7 @@
 
 이 저장소에서 사용된 데이터셋은 Kaggle에서 제공된 **원본 데이터**입니다.
 
-- 원본: [Kaggle — (데이터셋 이름)](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset)
+- 원본: [Kaggle — Spotify Tracks Dataset](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset)
 - 저작권(Contents): © Original Authors
 - 데이터베이스 라이선스: **Open Database License (ODbL) 1.0**
 
