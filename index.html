@@ -1,0 +1,815 @@
+ 
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>간단 음악 추천기 — 유사도 기반</title>
+
+  <!-- PapaParse for CSV parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" defer></script>
+
+  <style>
+    :root{
+      --bg:#0f1724;
+      --card:#111827;
+      --accent:#7cc242;
+      --muted:#9aa4b2;
+      --glass: rgba(255,255,255,0.03);
+      color-scheme: dark;
+    }
+    *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,'Noto Sans KR',sans-serif}
+    body{background:linear-gradient(180deg,#071028 0%, #061b2a 100%);color:#e6eef6;margin:0;padding:28px;min-height:100vh}
+    .container{max-width:980px;margin:0 auto;position:relative}
+    h1{font-size:20px;margin:0 0 10px}
+    p.lead{color:var(--muted);margin-top:4px;margin-bottom:18px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:16px; border-radius:12px; box-shadow:0 6px 20px rgba(2,6,23,0.6); margin-bottom:18px; position:relative; z-index:1}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .col{flex:1;min-width:260px}
+    input[type="text"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:var(--glass);color:#e6eef6}
+    button{background:var(--accent);color:#082018;border:0;padding:8px 12px;border-radius:8px;cursor:pointer}
+    .suggestions{position:relative}
+    .suggest-list{position:absolute;left:0;right:0;background:#071827;border-radius:8px;max-height:240px;overflow:auto;margin-top:8px;padding:6px;border:1px solid rgba(255,255,255,0.03);z-index:30}
+    .suggest-item{padding:8px;border-radius:6px;cursor:pointer}
+    .suggest-item:hover{background:rgba(255,255,255,0.02)}
+    ul.fav-list{list-style:none;padding:0;margin:8px 0}
+    li.fav-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:6px}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.03);text-align:left;font-size:13px;color:#dbeafe}
+    .meta{font-size:12px;color:var(--muted)}
+    .small{font-size:12px;color:var(--muted);margin-top:8px}
+    .controls{display:flex;gap:8px;align-items:center}
+    .chip{background:rgba(255,255,255,0.03);padding:6px 8px;border-radius:999px;font-size:13px;color:var(--muted)}
+    /* pager buttons */
+    #resultsPager button{ background: rgba(255,255,255,0.03); color: #e6eef6; border: 0; padding:6px 10px; border-radius:6px; cursor:pointer }
+    #resultsPager button:hover{ background: rgba(255,255,255,0.06); }
+    #resultsPager button[disabled]{ opacity:0.35; cursor:default }
+    #resultsPager button.active{ background:var(--accent); color:#082018; }
+    /* rank badges */
+    .rank-badge{ display:inline-block; padding:4px 8px; border-radius:999px; font-weight:600; color:#071827 }
+    .rank-1{ background:linear-gradient(90deg,#ffdd7b,#ffd43b) }
+    .rank-2{ background:linear-gradient(90deg,#d7d7d7,#cfcfcf) }
+    .rank-3{ background:linear-gradient(90deg,#e7c7b8,#f3b27a) }
+    /* popularity bar */
+    .pop-bar{ height:8px; width:100px; background:rgba(255,255,255,0.04); border-radius:6px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:8px }
+    .pop-fill{ height:100%; background:linear-gradient(90deg,#7cc242,#00c2ff); transition: width 0.35s ease; }
+    #resultsTable tr:hover{ background: rgba(255,255,255,0.02); }
+    h1{ font-weight:600; letter-spacing:0.2px }
+    .center{text-align:center;color:var(--muted);padding:10px}
+    /* fancy select - dark theme made to match suggestions */
+    .fancy-select{background:#071827; color:#e6eef6; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.03); box-shadow:0 6px 18px rgba(2,6,23,0.45); appearance:none; -webkit-appearance:none; -moz-appearance:none; position:relative; padding-right:34px}
+    .fancy-select::-ms-expand{ display: none; }
+    /* show arrow via background SVG */
+    .fancy-select{ background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="%23dbeafe" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'); background-repeat: no-repeat; background-position: right 10px center; background-size: 16px; }
+    .fancy-select:focus{ outline:none; box-shadow: 0 6px 18px rgba(124,194,66,0.08); }
+    .fancy-select option{ background: #071827; color: #e6eef6 }
+    .fancy-select:focus{outline:none; box-shadow: 0 6px 18px rgba(124,194,66,0.06)}
+    /* subtitle small */
+    .notice{font-size:12px;color:var(--muted);padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);}
+    /* header musical icon */
+    .music-icon{width:22px;height:22px;display:inline-block;vertical-align:middle;margin-right:8px}
+    /* animated wave behind header */
+    .header-wave{position:relative}
+    .header-wave::after{ content:''; position:absolute; left:-40%; right:-40%; top:0; height:64px; pointer-events:none; background:radial-gradient(circle at 50% 20%, rgba(124,194,66,0.04), transparent 20%), linear-gradient(90deg, rgba(0,194,255,0.02), rgba(124,194,66,0.02)); transform: translateY(-8px); filter: blur(8px); }
+    /* subtle music-note patterned overlay for container */
+    .container::before{ content:''; position:absolute; inset:0; z-index:0; pointer-events:none; background-image: radial-gradient(circle at 8% 18%, rgba(124,194,66,0.012) 0 6px, transparent 6px), radial-gradient(circle at 60% 30%, rgba(0,194,255,0.01) 0 4px, transparent 4px); background-size: 140px 140px; opacity:0.9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-wave" style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+      <button id="headerBackBtn" style="display:none;background:var(--accent);color:#082018;border:0;padding:8px 12px;border-radius:8px;cursor:pointer">이전(장르선택)</button>
+      <svg class="music-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M9 17V5l10-2v12" stroke="#7cc242" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="7" cy="17" r="2" fill="#7cc242"/><circle cx="17" cy="15" r="2" fill="#00c2ff"/></svg>
+      <h1>나만의 노래 추천기 (유사도 기반)</h1>
+    </div>
+    <p class="lead">검색해서 좋아하는 노래 5곡을 골라보세요. 선택한 5곡을 바탕으로 데이터의 오디오 특징들을 비교해 유사한 곡들을 추천합니다.</p>
+
+    <!-- Genre selection screen (shown first) -->
+    <div id="genreScreen" class="card" style="display:block;margin-bottom:18px">
+      <label><strong>장르 선택</strong></label>
+      <select class="fancy-select" id="genreSelect" style="width:100%;padding:8px;margin-top:8px;margin-bottom:12px">
+        <option value="">-- 장르 선택 --</option>
+      </select>
+      <div class="small meta" style="margin-top:6px;color:var(--muted)">장르를 선택하면 검색과 추천 결과가 해당 장르의 곡으로 제한됩니다. 괄호 안 숫자는 그 장르에 포함된 곡 수입니다.</div>
+      <div class="small notice" style="margin-top:8px">데이터는 공개 소스(<a href="https://www.kaggle.com/" target="_blank" style="color:var(--accent); text-decoration:underline">Kaggle</a> 등) 기반 예시입니다 (최종 업데이트: 2022).</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="genreNextBtn">다음</button>
+      </div>
+    </div>
+
+    <!-- Main screen: search + favorites + results (hidden until Next) -->
+    <div id="mainScreen" style="display:none">
+    <div class="card">
+      <div class="row">
+        <div style="display:flex;justify-content:flex-start;margin-bottom:8px">
+        </div>
+        <div class="col">
+          <label style="margin-top:8px;display:block"><strong>노래 검색 (제목 / 아티스트)</strong></label>
+          <div class="suggestions">
+            <input id="searchInput" type="text" placeholder="예: kanye, hold on, ghost" autocomplete="off"/>
+            <div id="suggestList" class="suggest-list" style="display:none"></div>
+          </div>
+          <div class="small">검색어를 입력하면 제목 또는 아티스트에 포함된 항목이 아래에 표시됩니다. 클릭하면 즐겨찾기(최대 5곡)에 추가됩니다.</div>
+        </div>
+
+        <div class="col">
+          <label><strong>선택한 노래 (최대 5)</strong></label>
+          <ul id="favList" class="fav-list"></ul>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="recommendBtn">추천 받기</button>
+            <button id="clearBtn" style="background:#374151">초기화</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="statusCard" class="card center">데이터 로드 중... 잠시만요.</div>
+
+    <div id="resultsCard" class="card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>추천 결과</strong>
+        <div class="meta">유사도: 0~1 범위 • 인기도는 0~100</div>
+      </div>
+      <table id="resultsTable">
+        <thead>
+              <tr><th>순위</th><th>곡명</th><th>아티스트</th><th>장르</th><th>인기도</th><th>유사도</th></tr>
+            </thead>
+        <tbody></tbody>
+      </table>
+      <div id="resultsPager" style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:8px"></div>
+    </div>
+
+    <div class="small">실행 팁: 이 폴더에서 VSCode Live Server로 열거나, 터미널에서 <code>python -m http.server</code> 실행 후 접속하세요.</div>
+  </div> <!-- end mainScreen -->
+  </div> <!-- end mainScreen inner card -->
+
+  <script>
+  // ---------- 설정: 가중치 / 제외컬럼 -------------
+  const excludeCols = ['Unnamed: 0','popularity']; // CSV에서 제외할 컬럼들
+  const defaultWeights = {
+    danceability: 1.0,
+    energy: 1.0,
+    valence: 1.0,
+    acousticness: 0.7,
+    tempo: 0.7,
+    loudness: 0.7,
+    instrumentalness: 0.7,
+    duration_ms: 0.3,
+    key: 0.2,
+    mode: 0.2,
+    speechiness: 0.2,
+    liveness: 0.2,
+    time_signature: 0.2
+  };
+  const GENRE_BONUS = 0.04; // 줄임
+  const GENRE_PENALTY = 0.02;
+  // parameters controlling how similarity is transformed and spread
+  // transform / jitter / penalties (tune for spread and uniqueness)
+  const BASE_SIM_WEIGHT = 0.72; // 코사인 영향력 낮춤
+  const DISTANCE_SCALE = 1.8; // kept for backward compatibility but no longer used for distance transform
+  const JITTER_MAX = 0.0015;
+  const JITTER_MIN = 0.00002;
+  const VECCOUNT_PENALTY_PER_DUP = 0.001; // 약간 키움
+  const TIE_EPSILON = 1e-9;
+  const SIM_EXP = 0.6; // exponent < 1 makes high similarity rarer (1 - (d/maxDist)^SIM_EXP)
+  const FEATURE_VAR_BOOST = 1.0; // how much to boost weight for features with high variance among favorites
+
+  // ---------- 유틸 ----------
+  function normalizeArray(arr){
+    const min = Math.min(...arr);
+    const max = Math.max(...arr);
+    if(max - min === 0) return arr.map(_=>0.0);
+    return arr.map(v => (v - min) / (max - min));
+  }
+  function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+  function norm(a){ return Math.sqrt(dot(a,a)); }
+  function cosine(a,b){ const na = norm(a), nb = norm(b); if(na===0||nb===0) return 0; return dot(a,b)/(na*nb); }
+
+  // compare arrays with small tolerance
+  function arraysAlmostEqual(a,b, tol=1e-9){
+    if(!Array.isArray(a) || !Array.isArray(b)) return false;
+    if(a.length !== b.length) return false;
+    for(let i=0;i<a.length;i++){
+      if(Math.abs((a[i]||0) - (b[i]||0)) > tol) return false;
+    }
+    return true;
+  }
+
+  // (removed arraysAlmostEqual — no longer used since similarity is transformed deterministically)
+
+  // deterministic hash -> float 0..1 (FNV-1a 32-bit)
+  function hashStringToUnitFloat(s){
+    let h = 2166136261 >>> 0;
+    for(let i=0;i<s.length;i++){
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return (h >>> 0) / 4294967295;
+  }
+
+  // normalize title/artist for deduping: remove parentheses, 'feat' info, punctuation, collapse spaces
+  function normalizeForKey(s){
+    if(!s) return '';
+    let t = (''+s).toLowerCase();
+    // remove parentheses content
+    t = t.replace(/\([^)]*\)/g, '');
+    // remove 'feat' 'ft' and following part
+    t = t.replace(/\bfeat\.?\b.*$/i, '');
+    t = t.replace(/\bft\.?\b.*$/i, '');
+    // remove common punctuation except spaces
+    t = t.replace(/[\.,!?:;"'’\-–—_\/\\\[\]]+/g, ' ');
+    // collapse whitespace
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+  }
+
+  function normalizeArtistKey(a){
+    if(!a) return '';
+    let s = (''+a).toLowerCase();
+    // take only first artist token (before ';', ',', '/', '&')
+    s = s.split(/[;,\/&]/)[0];
+    // remove parentheses and variant parts
+    s = s.replace(/\([^)]*\)/g, '');
+    s = s.replace(/\bfeat\.?\b.*$/i, '');
+    s = s.replace(/\bft\.?\b.*$/i, '');
+    s = s.replace(/[\.,!?:;"'’\-–—_\[\]]+/g, ' ');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s;
+  }
+
+  // ---------- 전역 상태 ----------
+  let rawRows = [];     // 원본 CSV rows as objects
+  let numericCols = []; // numeric feature columns used for vectors
+  let scalers = {};     // {col: {min,max}} (for optional reuse)
+  let tracks = [];      // processed track objects
+  let genreMap = {};    // genre -> id
+  const idToGenreName = {}; // id -> display name (original case)
+  let vecCounts = {};   // vector key -> count for break ties
+  let favorites = [];   // array of track indices (in tracks)
+  let selectedGenreId = null;
+  let maxDist = 0; // maximum possible weighted distance used for normalizing Euclidean distances
+  // pagination
+  const PAGE_SIZE = 20;
+  let currentResults = [];
+  let currentPage = 0;
+
+  // ---------- DOM ----------
+  const statusCard = document.getElementById('statusCard');
+  const suggestList = document.getElementById('suggestList');
+  const searchInput = document.getElementById('searchInput');
+  const favList = document.getElementById('favList');
+  const recommendBtn = document.getElementById('recommendBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const resultsCard = document.getElementById('resultsCard');
+  const resultsTableBody = document.querySelector('#resultsTable tbody');
+
+  // ---------- CSV 로드 ----------
+  function loadCSV(){
+    statusCard.style.display = 'block';
+    statusCard.textContent = 'dataset.csv 로드 중...';
+    // Use fetch first to better detect HTTP/network errors, then parse via Papa.parse
+    const url = './dataset.csv';
+    console.log('loadCSV: fetching', url);
+    fetch(url, {cache: 'no-store'})
+      .then(resp => {
+        if(!resp.ok){
+          throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        }
+        return resp.text();
+      })
+      .then(csvText => {
+        console.log('loadCSV: fetched CSV length', csvText.length);
+        Papa.parse(csvText, {
+          header: true,
+          skipEmptyLines: true,
+          complete: function(results){
+            rawRows = results.data;
+            statusCard.textContent = `데이터 ${rawRows.length}개 로드 완료. 특징 자동 감지 중...`;
+            console.log('loadCSV: first row sample', rawRows[0]);
+            setTimeout(processData, 200);
+          },
+          error: function(err){
+            console.error('loadCSV: Papa.parse error', err);
+            statusCard.textContent = 'CSV 파싱 실패: ' + err.message + '. (파일 인코딩 또는 형식 확인)';
+          }
+        });
+      })
+      .catch(err => {
+        console.error('loadCSV: fetch failed', err);
+        // Show helpful hints
+        let extra = '';
+        if(err.message && err.message.includes('404')) extra = ' (dataset.csv 파일을 같은 폴더에 두었는지 확인하세요)';
+        if(err.message && err.message.includes('Failed to fetch')) extra = ' (로컬 서버로 열었는지 확인하거나 방화벽을 확인하세요)';
+        statusCard.textContent = 'CSV 로드 실패: ' + err.message + extra;
+      });
+  }
+
+  // ---------- 데이터 전처리 ----------
+  function processData(){
+    // 1) 문자열 컬럼 정리 (소문자, 공백 제거)
+    rawRows = rawRows.map(r => {
+      ['track_name','artists','album_name','track_genre'].forEach(c=>{
+        if(r[c] === undefined) r[c] = '';
+        r[c] = (''+r[c]).trim();
+      });
+      return r;
+    });
+
+    // --- Deduplicate rows (by track_id if present, otherwise name|artist) ---
+    const seenKeys = new Set();
+    const dedupRows = [];
+    let dupCount = 0;
+    rawRows.forEach(r => {
+      const id = (r['track_id'] || '').toString().trim();
+      const key = id ? `id:${id}` : `k:${(r['track_name']||'').toLowerCase().trim()}|${(r['artists']||'').toLowerCase().trim()}`;
+      if(!seenKeys.has(key)){
+        seenKeys.add(key);
+        dedupRows.push(r);
+      } else {
+        dupCount++;
+      }
+    });
+    if(dupCount > 0){
+      console.log(`processData: removed ${dupCount} duplicate rows`);
+      statusCard.textContent = `데이터 ${rawRows.length}개 로드 완료 — 중복 ${dupCount}개 제거. 특징 자동 감지 중...`;
+    }
+    rawRows = dedupRows;
+
+    // --- Additional dedupe: group by normalized title + first-artist and keep highest popularity ---
+    const grouped = new Map();
+    let removedByPopDedupe = 0;
+    rawRows.forEach(r => {
+      const keyTitle = normalizeForKey(r['track_name'] || '');
+      const keyArtist = normalizeArtistKey(r['artists'] || '');
+      const key = `k2:${keyTitle}|${keyArtist}`;
+      const pop = (r['popularity'] !== undefined && r['popularity'] !== '' && !isNaN(parseInt(r['popularity'],10))) ? parseInt(r['popularity'],10) : -1;
+      const existing = grouped.get(key);
+      if(!existing){
+        grouped.set(key, {row: r, pop});
+      } else {
+        if(pop > existing.pop){
+          // replace with higher-popularity row
+          grouped.set(key, {row: r, pop});
+          removedByPopDedupe++;
+        } else {
+          removedByPopDedupe++;
+        }
+      }
+    });
+    if(removedByPopDedupe > 0){
+      console.log(`processData: removed ${removedByPopDedupe} duplicates via popularity-based grouping`);
+      statusCard.textContent = `데이터 로드 완료 — 중복 ${dupCount + removedByPopDedupe}개 제거. 특징 자동 감지 중...`;
+    }
+    rawRows = Array.from(grouped.values()).map(x => x.row);
+
+    // 2) numeric 컬럼 자동 감지 (숫자로 파싱 가능한 컬럼)
+    const sample = rawRows[0] || {};
+    numericCols = Object.keys(sample).filter(k=>{
+      if(excludeCols.includes(k)) return false;
+      if(['track_name','artists','album_name','track_genre','track_id'].includes(k)) return false;
+      // check parseFloat
+      const v = sample[k];
+      return !isNaN(parseFloat(v)) && isFinite(v);
+    });
+
+    // 3) genre map
+    let nextId = 0;
+    rawRows.forEach(r=>{
+      const gRaw = (r['track_genre'] || '');
+      const g = gRaw.toLowerCase();
+      if(!(g in genreMap)){
+        genreMap[g] = nextId;
+        idToGenreName[nextId] = gRaw || g;
+        nextId++;
+      }
+    });
+
+    // 4) build numeric arrays per column for scaling (min-max 0..1)
+    const colValues = {};
+    numericCols.forEach(c => colValues[c] = []);
+    rawRows.forEach(r => {
+      numericCols.forEach(c=>{
+        const v = parseFloat(r[c]);
+        colValues[c].push(isNaN(v) ? 0 : v);
+      });
+    });
+    // compute min/max (for min-max scaling)
+    numericCols.forEach(c=>{
+      const arr = colValues[c];
+      const min = Math.min(...arr);
+      const max = Math.max(...arr);
+      scalers[c] = {min, max};
+    });
+    console.log('processData: numeric columns detected', numericCols, 'scalers sample', scalers[numericCols[0]]);
+
+    // 5) create tracks with scaled numeric features and weighted vector (min-max 0..1)
+    tracks = rawRows.map((r, idx) => {
+      const numericScaled = numericCols.map(c => {
+        const v = parseFloat(r[c]);
+        const val = isNaN(v) ? 0 : v;
+        const s = scalers[c];
+        if(s.max - s.min === 0) return 0;
+        return (val - s.min) / (s.max - s.min);
+      });
+
+      // map numericCols -> values object (store scaled values)
+      const numericObj = {};
+      numericCols.forEach((c,i)=> numericObj[c] = numericScaled[i]);
+
+      // build weighted vector from scaled values
+      let weighted = numericCols.map((c,i) => {
+        const w = defaultWeights[c] !== undefined ? defaultWeights[c] : 0.25;
+        return numericScaled[i] * w;
+      });
+      // do not normalize weighted vector; keep absolute weighted magnitudes for Euclidean distance
+      // compute a compact key for weighted vector counts (round low precision to avoid tiny float differences)
+      const vecKey = weighted.map(v => v.toFixed(6)).join('|');
+      vecCounts[vecKey] = (vecCounts[vecKey] || 0) + 1;
+
+      return {
+        idx, // index in tracks[] after dedup
+        track_name: (r['track_name']||'').toString(),
+        artists: (r['artists']||'').toString(),
+        album_name: (r['album_name']||'').toString(),
+        track_genre: (r['track_genre']||'').toString(),
+        genre_id: genreMap[(r['track_genre']||'').toLowerCase()],
+        numeric: numericObj,
+        weightedVec: weighted,
+        popularity: (r['popularity'] !== undefined && r['popularity'] !== '') ? parseInt(r['popularity'], 10) : null,
+        vecKey
+      };
+    });
+
+    statusCard.style.display = 'none';
+    statusCard.textContent = '';
+    // compute the theoretical maximum Euclidean distance between two weighted vectors
+    // since numericScaled in [0,1], max per-component difference is weight*1
+    maxDist = Math.sqrt(numericCols.reduce((s,c)=>{
+      const w = defaultWeights[c] !== undefined ? defaultWeights[c] : 0.25;
+      return s + (w * w);
+    }, 0));
+    initUI();
+  }
+
+  // ---------- UI 초기화 ----------
+  function initUI(){
+    // ready
+    statusCard.style.display = 'block';
+    statusCard.textContent = `준비 완료 — 트랙 ${tracks.length}개, 사용 가능한 특징 ${numericCols.length}개 (앨범 정보는 결과에 표시되지 않습니다)`;
+    setTimeout(()=> statusCard.style.display='none', 1400);
+
+    // populate genre select options
+    const genreSelect = document.getElementById('genreSelect');
+    const headerBackBtnRef = document.getElementById('headerBackBtn');
+    // populate select with counts and prettier labels
+    const genreCounts = {};
+    tracks.forEach(t => genreCounts[t.genre_id] = (genreCounts[t.genre_id] || 0) + 1);
+    genreSelect.innerHTML = '<option value="">-- 장르 선택 --</option>' + Object.keys(idToGenreName).map(id => {
+      const name = idToGenreName[id] || String(id);
+      const cnt = genreCounts[id] || 0;
+      return `<option value="${id}" data-count="${cnt}">${name} (${cnt})</option>`;
+    }).join('');
+    // disable search until a genre is selected
+    searchInput.disabled = true;
+    searchInput.placeholder = '먼저 장르를 선택하세요';
+
+    genreSelect.addEventListener('change', e => {
+      const v = e.target.value;
+      if(!v){
+        selectedGenreId = null;
+        searchInput.disabled = true;
+        searchInput.placeholder = '먼저 장르를 선택하세요';
+        favorites = []; renderFavorites(); resultsCard.style.display='none';
+        statusCard.textContent = `장르가 선택되지 않았습니다.`;
+        return;
+      }
+      selectedGenreId = parseInt(v);
+      searchInput.disabled = false;
+      searchInput.placeholder = '예: kanye, hold on, ghost';
+      favorites = []; renderFavorites(); resultsCard.style.display='none';
+      // show how many tracks in selected genre
+      const count = tracks.filter(t => t.genre_id === selectedGenreId).length;
+      statusCard.style.display = 'block';
+      statusCard.textContent = `선택된 장르: ${idToGenreName[selectedGenreId] || selectedGenreId} — 트랙 ${count}개`; 
+      setTimeout(()=> statusCard.style.display='none', 1800);
+      // clear suggestions
+      suggestList.style.display='none'; suggestList.innerHTML='';
+    });
+
+    const genreNextBtn = document.getElementById('genreNextBtn');
+    genreNextBtn.addEventListener('click', () => {
+      if(!genreSelect.value){
+        return alert('장르를 선택하세요.');
+      }
+      selectedGenreId = parseInt(genreSelect.value);
+      // show main screen
+      document.getElementById('genreScreen').style.display = 'none';
+      document.getElementById('mainScreen').style.display = 'block';
+      // enable search
+      searchInput.disabled = false;
+      if(headerBackBtnRef) headerBackBtnRef.style.display = 'inline-block';
+      searchInput.placeholder = '예: kanye, hold on, ghost';
+      // clear favorites and results
+      favorites = []; renderFavorites(); resultsCard.style.display='none';
+    });
+
+    headerBackBtnRef.addEventListener('click', () => {
+      // show genre screen
+      document.getElementById('genreScreen').style.display = 'block';
+      document.getElementById('mainScreen').style.display = 'none';
+      selectedGenreId = null;
+      searchInput.disabled = true; searchInput.placeholder = '먼저 장르를 선택하세요';
+      headerBackBtnRef.style.display = 'none';
+      favorites = []; renderFavorites(); resultsCard.style.display='none';
+    });
+
+    // search input events
+    searchInput.addEventListener('input', e => {
+      const q = e.target.value.trim().toLowerCase();
+      if(!q){ suggestList.style.display='none'; suggestList.innerHTML=''; return; }
+      if(selectedGenreId === null){ suggestList.style.display='none'; suggestList.innerHTML=''; return; }
+      const matches = tracks.filter(t => (t.genre_id === selectedGenreId) && (t.track_name.toLowerCase().includes(q) || t.artists.toLowerCase().includes(q)));
+      renderSuggestions(matches.slice(0, 20));
+    });
+
+    searchInput.addEventListener('keydown', e=>{
+      if(e.key === 'Enter') {
+        e.preventDefault();
+        // if suggestion visible and one match exactly? just hide
+        suggestList.style.display='none';
+      }
+    });
+
+    recommendBtn.addEventListener('click', onRecommend);
+    clearBtn.addEventListener('click', ()=>{
+      favorites = []; renderFavorites(); resultsCard.style.display='none';
+    });
+
+    // initial clear
+    favorites = [];
+    renderFavorites();
+  }
+
+  function renderSuggestions(list){
+    if(!list.length){
+      suggestList.style.display='none';
+      suggestList.innerHTML = '';
+      return;
+    }
+    suggestList.innerHTML = '';
+    // ensure we only show unique strings (track - artist) even if dataset has multiple versions
+    const shown = new Set();
+    list.forEach(item=>{
+      const pop = (item.popularity === null || item.popularity === undefined || isNaN(item.popularity)) ? null : Math.max(0, Math.min(100, item.popularity));
+      const label = `${item.track_name} — ${item.artists}` + (pop === null ? '' : ` (${pop})`);
+      if(shown.has(label)) return; // skip duplicate display
+      shown.add(label);
+      const div = document.createElement('div');
+      div.className = 'suggest-item';
+      div.textContent = label;
+      div.onclick = () => {
+        addFavoriteByIdx(item.idx);
+        searchInput.value = '';
+        suggestList.style.display='none';
+      };
+      suggestList.appendChild(div);
+    });
+    suggestList.style.display = 'block';
+  }
+
+  function addFavoriteByIdx(idx){
+    // prevent adding the same track (by index) or duplicate track with same name/artist
+    const t = tracks[idx];
+    // ensure genre selected
+    if(selectedGenreId === null) return alert('먼저 장르를 선택하세요.');
+    if(t.genre_id !== selectedGenreId) return alert('선택된 장르의 곡만 추가할 수 있습니다.');
+    if(favorites.includes(idx)) return alert('이미 추가된 노래입니다.');
+    if(favorites.some(i => tracks[i].track_name === t.track_name && tracks[i].artists === t.artists)) return alert('이미 추가된 노래입니다.');
+    if(favorites.length >= 5) return alert('최대 5곡까지 선택 가능합니다.');
+    favorites.push(idx);
+    renderFavorites();
+  }
+
+  function renderFavorites(){
+    favList.innerHTML = '';
+    favorites.forEach((idx, i)=>{
+      const t = tracks[idx];
+      const li = document.createElement('li');
+      li.className = 'fav-item';
+      li.innerHTML = `<div><strong>${t.track_name}</strong><div class="meta">${t.artists}</div></div>
+                      <div style="display:flex;gap:8px;align-items:center">
+                        <span class="chip">${i+1}</span>
+                        <button onclick="removeFav(${idx})" style="background:#ef4444;color:white;border-radius:8px;padding:6px 8px">삭제</button>
+                      </div>`;
+      favList.appendChild(li);
+    });
+    if(favorites.length === 0){
+      favList.innerHTML = '<div class="meta">아직 선택된 곡이 없습니다. 검색창에서 곡을 찾아 추가하세요.</div>';
+    }
+  }
+  window.removeFav = function(idx){
+    favorites = favorites.filter(i=>i!==idx);
+    renderFavorites();
+  };
+
+  // ---------- 추천 계산 ----------
+  function onRecommend(){
+    if(selectedGenreId === null) return alert('먼저 장르를 선택하세요.');
+    if(favorites.length === 0) return alert('먼저 좋아하는 곡을 1개 이상 추가하세요 (권장 3~5곡).');
+    // compute per-feature importance and a weighted average vector based on selected favorites
+    const favTracks = favorites.map(i => tracks[i]);
+    let avgVec = [];
+    let adjWeights = [];
+    let localMaxDist = maxDist;
+    if(numericCols.length === 0){
+      // fallback: average precomputed weightedVec
+      const len = favTracks[0].weightedVec.length;
+      const avg = [];
+      for(let j=0;j<len;j++){
+        let s=0;
+        for(let k=0;k<favTracks.length;k++) s += favTracks[k].weightedVec[j];
+        avg.push(s / favTracks.length);
+      }
+      avgVec = avg;
+    } else {
+      const len = numericCols.length;
+      // compute mean and variance per numeric column across favorites
+      const means = new Array(len).fill(0);
+      const vars = new Array(len).fill(0);
+      for(let j=0;j<len;j++){
+        const col = numericCols[j];
+        const vals = favTracks.map(t => (t.numeric[col] || 0));
+        const m = vals.reduce((s,v) => s+v, 0) / vals.length;
+        means[j] = m;
+        const variance = vals.reduce((s,v) => s + (v - m)*(v - m), 0) / vals.length;
+        vars[j] = variance;
+      }
+      // normalize variances to 0..1
+      const minVar = Math.min(...vars);
+      const maxVar = Math.max(...vars);
+      const varRange = (maxVar - minVar) || 1;
+      const multipliers = new Array(len);
+      for(let j=0;j<len;j++){
+        const normalizedVar = (vars[j] - minVar) / varRange;
+        multipliers[j] = 1 + (normalizedVar * FEATURE_VAR_BOOST);
+      }
+      // adjusted weights per-feature
+      adjWeights = numericCols.map((c,i) => {
+        const w = defaultWeights[c] !== undefined ? defaultWeights[c] : 0.25;
+        return w * multipliers[i];
+      });
+      // compute average weighted vector
+      avgVec = new Array(len).fill(0);
+      for(let j=0;j<len;j++){
+        avgVec[j] = means[j] * adjWeights[j];
+      }
+      // recompute local max distance using adjusted weights
+      localMaxDist = Math.sqrt(adjWeights.reduce((s,w)=> s + (w*w), 0));
+    }
+
+    // compute similarity for all tracks not in favorites
+    const results = [];
+    tracks.forEach(t=>{
+      if(t.genre_id !== selectedGenreId) return; // only consider selected genre
+      if(favorites.includes(t.idx)) return;
+      // compute Euclidean distance between avgVec (weighted) and this track's weighted vector using adjusted weights
+      let tWeightedVec = [];
+      if(adjWeights.length === 0){
+        // fallback: use precomputed weightedVec
+        tWeightedVec = t.weightedVec;
+      } else {
+        tWeightedVec = numericCols.map((c,j) => ((t.numeric[c] || 0) * adjWeights[j]));
+      }
+      let distSq = 0;
+      for(let i=0;i<tWeightedVec.length;i++){
+        const diff = (avgVec[i]||0) - (tWeightedVec[i]||0);
+        distSq += diff * diff;
+      }
+      const dist = Math.sqrt(distSq);
+      // normalize distance to 0..1 by dividing by localMaxDist
+      let normDist = (localMaxDist > 0) ? (dist / localMaxDist) : 0;
+      normDist = Math.max(0, Math.min(1, normDist));
+      // similarity is 1 - normalized distance (apply exponent to make high sim rarer)
+      sim = 1 - Math.pow(normDist, SIM_EXP);
+      // exact vector equality (within tolerance) -> sim = 1
+      if(arraysAlmostEqual(avgVec, tWeightedVec, 1e-9)) sim = 1.0;
+      // --- similarity computed using normalized Euclidean distance ---
+      results.push({track:t, score:sim});
+    });
+
+    // sort by score then by name to make ordering deterministic and break ties
+    results.sort((a,b)=>{
+      const diff = b.score - a.score;
+      if(Math.abs(diff) > 1e-9) return diff;
+      return a.track.track_name.localeCompare(b.track.track_name);
+    });
+    // tie-break pass: ensure each score is unique by shifting ties slightly down (keeps ordering)
+    for(let i = 1; i < results.length; i++){
+      if(Math.abs(results[i].score - results[i-1].score) <= TIE_EPSILON){
+        // shift this entry down by a tiny amount scaled by its index to maintain ordering
+        const shift = Math.max(1e-12, (i) * 1e-9);
+        results[i].score = Math.max(0, results[i-1].score - shift);
+      }
+    }
+    // (Removed 3-decimal enforced uniqueness - we prefer actual similarity distribution.)
+    // debug log: show top 5 scores and confirm distribution
+    if(results.length){
+      console.log('Recommend: top 5 similarities (raw)', results.slice(0,5).map(r => ({name: r.track.track_name, score: r.score}))); 
+    }
+    // Filter out consecutive or duplicate track_name+artist entries to avoid repeated songs
+    const seen = new Set();
+    const filtered = [];
+    for(const r of results){
+      const key = `${r.track.track_name}||${r.track.artists}`.toLowerCase();
+      if(seen.has(key)) continue; // skip duplicates
+      seen.add(key);
+      filtered.push(r);
+      // no hard cap; keep all filtered results so we can paginate
+    }
+    showResults(filtered);
+  }
+
+  function showResults(list){
+    // store full results and render first page
+    currentResults = list;
+    currentPage = 0;
+    renderResultsPage(0);
+    resultsCard.style.display = 'block';
+  }
+
+  function renderResultsPage(pageIndex){
+    if(!currentResults) return;
+    const page = Math.max(0, Math.min(pageIndex, Math.ceil(currentResults.length / PAGE_SIZE) - 1));
+    currentPage = page;
+    resultsTableBody.innerHTML = '';
+      const start = page * PAGE_SIZE;
+    const end = Math.min(currentResults.length, start + PAGE_SIZE);
+    for(let i = start; i < end; i++){
+      const r = currentResults[i];
+      const rank = i + 1; // 1-based overall rank
+      const tr = document.createElement('tr');
+      const pop = (r.track.popularity === null || r.track.popularity === undefined || isNaN(r.track.popularity)) ? '-' : Math.max(0, Math.min(100, r.track.popularity));
+      const popPct = typeof pop === 'number' ? pop : 0;
+      let rankHtml = `<span class="rank-badge">${rank}</span>`;
+      if(rank === 1) rankHtml = `<span class="rank-badge rank-1">${rank}</span>`;
+      else if(rank === 2) rankHtml = `<span class="rank-badge rank-2">${rank}</span>`;
+      else if(rank === 3) rankHtml = `<span class="rank-badge rank-3">${rank}</span>`;
+      tr.innerHTML = `<td>${rankHtml}</td>
+              <td><strong>${r.track.track_name}</strong></td>
+              <td>${r.track.artists}</td>
+              <td>${r.track.track_genre||'-'}</td>
+              <td><div class="pop-bar"><div class="pop-fill" style="width:${popPct}%"></div></div><span class="meta">${pop === '-' ? '-' : pop}</span></td>
+              <td>${r.score.toFixed(3)}</td>`;
+      resultsTableBody.appendChild(tr);
+    }
+    renderPager();
+  }
+
+  function renderPager(){
+    const pager = document.getElementById('resultsPager');
+    pager.innerHTML = '';
+    // show total results
+    const totalTxt = document.createElement('div');
+    totalTxt.textContent = `총 ${currentResults.length}개`; totalTxt.className = 'meta';
+    totalTxt.style.marginRight = '12px';
+    pager.appendChild(totalTxt);
+    if(!currentResults || currentResults.length <= PAGE_SIZE){
+      return;
+    }
+    const numPages = Math.ceil(currentResults.length / PAGE_SIZE);
+    const createBtn = (text, cls, onClick) => { const b = document.createElement('button'); b.textContent = text; b.className = cls || ''; b.onclick = onClick; return b; };
+    // Prev
+    const prevBtn = createBtn('◀ 이전', '', ()=>{ if(currentPage > 0) renderResultsPage(currentPage - 1); });
+    if(currentPage === 0) prevBtn.disabled = true;
+    pager.appendChild(prevBtn);
+    // pages (limit display to up to 10 pages with ellipsis)
+    const maxVisible = 9;
+    let start = Math.max(0, currentPage - Math.floor(maxVisible/2));
+    let end = Math.min(numPages, start + maxVisible);
+    if(end - start < maxVisible){
+      start = Math.max(0, end - maxVisible);
+    }
+    if(start > 0){
+      pager.appendChild(createBtn('1', '', ()=>renderResultsPage(0)));
+      if(start > 1) pager.appendChild(document.createTextNode(' ... '));
+    }
+    for(let p = start; p < end; p++){
+      const btn = createBtn(String(p+1), p === currentPage ? 'active' : '', ()=>renderResultsPage(p));
+      if(p === currentPage){ btn.style.fontWeight = 'bold'; }
+      pager.appendChild(btn);
+    }
+    if(end < numPages){
+      if(end < numPages - 1) pager.appendChild(document.createTextNode(' ... '));
+      pager.appendChild(createBtn(String(numPages), '', ()=>renderResultsPage(numPages-1)));
+    }
+    // Next
+    const nextBtn = createBtn('다음 ▶', '', ()=>{ if(currentPage < numPages-1) renderResultsPage(currentPage + 1); });
+    if(currentPage >= numPages-1) nextBtn.disabled = true;
+    pager.appendChild(nextBtn);
+  }
+
+  // ---------- 시작 ----------
+  loadCSV();
+  </script>
+</body>
+</html>
